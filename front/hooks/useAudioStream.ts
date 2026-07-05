@@ -21,6 +21,7 @@ export interface TranscriptMessage {
 interface AudioContextType {
   state: AudioState;
   isConnected: boolean;
+  isReconnecting: boolean;
   error: string | null;
   transcripts: TranscriptMessage[];
   startListening: () => Promise<void>;
@@ -34,6 +35,11 @@ const GEMINI_AUDIO_OUTPUT_SAMPLE_RATE = 24000;
 const FRAME_DURATION_MS = 30;
 const FRAME_BYTE_SIZE = Math.floor((SAMPLE_RATE * FRAME_DURATION_MS) / 1000) * 2; // 2 bytes per sample (16-bit)
 const SCRIPT_PROCESSOR_SIZE = 512; // valid power-of-two buffer size for createScriptProcessor
+
+// WebSocket retry configuration
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
+const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
 // ======================================
 // Web Audio Recorder (ScriptProcessorNode fallback)
@@ -322,9 +328,13 @@ export function useAudioStream(): AudioContextType {
   const playerRef = useRef<WebAudioPlayer | null>(null);
   const isRecordingRef = useRef(false);
   const selectedImageUriRef = useRef<string | null>(null);
+  const retryCountRef = useRef(0);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
 
   const [state, setState] = useState<AudioState>('IDLE');
   const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
   const audioMimeTypeRef = useRef<string | null>(null);
@@ -332,25 +342,32 @@ export function useAudioStream(): AudioContextType {
   // ======================================
   // WebSocket Setup
   // ======================================
+  const getWebSocketUrl = useCallback(async (): Promise<string> => {
+    const devIp = process.env.EXPO_PUBLIC_API_URL || '127.0.0.1';
+    const host =
+      Platform.OS === 'android' && devIp === '127.0.0.1'
+        ? '10.0.2.2:8000'
+        : `${devIp}:8000`;
+
+    const accessToken = await getValidAccessToken();
+    const tokenQuery = accessToken
+      ? `?token=${encodeURIComponent(accessToken)}`
+      : '';
+
+    return `ws://${host}/api/stream${tokenQuery}`;
+  }, [getValidAccessToken]);
+
   const openSocket = useCallback(async () => {
     try {
-      const devIp = process.env.EXPO_PUBLIC_API_URL || '127.0.0.1';
-      const host =
-        Platform.OS === 'android' && devIp === '127.0.0.1'
-          ? '10.0.2.2:8000'
-          : `${devIp}:8000`;
-
-      const accessToken = await getValidAccessToken();
-      const tokenQuery = accessToken
-        ? `?token=${encodeURIComponent(accessToken)}`
-        : '';
-
-      const ws = new WebSocket(`ws://${host}/api/stream${tokenQuery}`);
+      const url = await getWebSocketUrl();
+      const ws = new WebSocket(url);
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
         console.log('[WebSocket] Connected');
+        retryCountRef.current = 0;
         setIsConnected(true);
+        setIsReconnecting(false);
         setError(null);
       };
 
@@ -368,6 +385,10 @@ export function useAudioStream(): AudioContextType {
       ws.onclose = () => {
         console.log('[WebSocket] Disconnected');
         setIsConnected(false);
+        // Trigger reconnection if not already reconnecting
+        if (isMountedRef.current && !isReconnecting) {
+          reconnectWithRetry();
+        }
       };
 
       wsRef.current = ws;
@@ -375,8 +396,59 @@ export function useAudioStream(): AudioContextType {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       console.error('[openSocket] Error:', errorMsg);
       setError(errorMsg);
+      setIsConnected(false);
+      // Trigger reconnection on initial connection failure
+      if (isMountedRef.current && !isReconnecting) {
+        reconnectWithRetry();
+      }
     }
-  }, [getValidAccessToken]);
+  }, [getWebSocketUrl, isReconnecting]);
+
+  // ======================================
+  // Reconnection Logic with Exponential Backoff
+  // ======================================
+  const reconnectWithRetry = useCallback(() => {
+    if (!isMountedRef.current) return;
+
+    // Increment retry count
+    retryCountRef.current += 1;
+
+    if (retryCountRef.current > MAX_RETRIES) {
+      console.error('[WebSocket] Max retries reached. Giving up.');
+      setIsReconnecting(false);
+      setError(`Failed to reconnect after ${MAX_RETRIES} attempts. Please check your connection.`);
+      return;
+    }
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(
+      INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCountRef.current - 1),
+      MAX_RETRY_DELAY_MS
+    );
+
+    console.log(
+      `[WebSocket] Reconnection attempt ${retryCountRef.current}/${MAX_RETRIES} in ${delay}ms...`
+    );
+
+    setIsReconnecting(true);
+    setError(`Reconnecting in ${delay / 1000} seconds... (Attempt ${retryCountRef.current}/${MAX_RETRIES})`);
+
+    // Clear any existing timeout
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+    }
+
+    // Schedule reconnection
+    retryTimeoutRef.current = setTimeout(() => {
+      if (isMountedRef.current) {
+        openSocket().catch((err) => {
+          console.error('[reconnectWithRetry] Failed to reconnect:', err);
+          // Continue retrying
+          reconnectWithRetry();
+        });
+      }
+    }, delay);
+  }, [openSocket]);
 
   // ======================================
   // WebSocket Message Handler
@@ -586,6 +658,8 @@ export function useAudioStream(): AudioContextType {
   // Setup & Cleanup
   // ======================================
   useEffect(() => {
+    isMountedRef.current = true;
+
     // Initialize web audio player if Web APIs are available
     const isWebPlatform =
       Platform.OS === 'web' || typeof navigator !== 'undefined';
@@ -600,6 +674,14 @@ export function useAudioStream(): AudioContextType {
 
     // Cleanup on unmount
     return () => {
+      isMountedRef.current = false;
+
+      // Clear retry timeout
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+
       if (isRecordingRef.current) {
         stopListening().catch(console.error);
       }
@@ -615,6 +697,7 @@ export function useAudioStream(): AudioContextType {
   return {
     state,
     isConnected,
+    isReconnecting,
     error,
     transcripts,
     startListening,
