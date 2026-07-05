@@ -3,6 +3,7 @@ from strawberry.fastapi import GraphQLRouter
 
 from app.core.config import settings
 from app.api.stream import router as stream_router
+from app.api.auth_routes import router as auth_router
 
 # GraphQL basique de secours
 import strawberry
@@ -21,3 +22,4 @@ app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION)
 # Enregistrement des routes
 app.include_router(graphql_app, prefix="/graphql")
 app.include_router(stream_router, prefix="/api") # Ce qui donne l'URL finale : /api/stream
+app.include_router(auth_router, prefix="/api")

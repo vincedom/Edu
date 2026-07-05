@@ -1,0 +1,40 @@
+# Rauthy OIDC provider for local development.
+# Admin UI: https://localhost:8443/auth/v1/admin/
+# Mail catcher (password reset / registration emails): http://localhost:1080
+#
+# First start: read the admin password from logs:
+#   docker compose logs rauthy | grep -i password
+# Default admin account: admin@localhost
+#
+# Then register the mobile OIDC client (Clients → Add new Client):
+#   Client ID:        edu-front-app
+#   Client Type:      Public (no secret)
+#   Redirect URIs:    front://oauth/callback
+#   Post Logout URIs: front://oauth/logout
+#   Allowed Scopes:   openid, profile, email
+#   Grant types:      authorization_code, refresh_token
+#   PKCE:             required, S256 only
+#   Access/ID Algo:   RS256
+
+services:
+  mailcrab:
+    image: marlonb/mailcrab:latest
+    ports:
+      - "1080:1080"
+
+  rauthy:
+    image: ghcr.io/sebadob/rauthy:0.35.2
+    environment:
+      - LOCAL_TEST=true
+      - SMTP_URL=mailcrab
+      - SMTP_PORT=1025
+      - SMTP_DANGER_INSECURE=true
+    volumes:
+      - rauthy_data:/app/data
+    ports:
+      - "8443:8443"
+    depends_on:
+      - mailcrab
+
+volumes:
+  rauthy_data:

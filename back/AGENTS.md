@@ -19,4 +19,4 @@ You are an expert Python developer building a high-performance backend using Fas
 ## Strict Code Standards
 - Use strict Python type hinting.
 - Use asynchronous operations (`async/await`) for database, network, and GraphQL resolvers.
-- Keep all code comments and schemas documented in English.
+- ALL COMMENTS MUST BE IN ENGLISH. This includes code comments, schema definitions, and any documentation within the backend.

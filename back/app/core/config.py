@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -6,9 +7,25 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     DEBUG: bool = False
 
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_mode(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production"}:
+                return False
+            if normalized in {"dev", "debug", "development"}:
+                return True
+        return value
+
     # Clé API obligatoire pour Gemini
     # Pydantic lèvera une erreur claire au démarrage si elle est manquante
     GEMINI_API_KEY: str
+
+    # OIDC / Rauthy (JWT validation via JWKS)
+    OIDC_ISSUER: str = "https://localhost:8443/auth/v1"
+    OIDC_AUDIENCE: str = "edu-front-app"
+    AUTH_REQUIRED: bool = False
 
     # Configuration Audio (On centralise pour éviter les "magic numbers")
     SAMPLE_RATE: int = 16000

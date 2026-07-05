@@ -23,7 +23,7 @@ export default function EntryScreen() {
       {/* Route to Administration Interface (Parents/Teachers) */}
       <TouchableOpacity 
         style={[styles.button, styles.adminButton]} 
-        onPress={() => router.push('/admin/parent')}
+        onPress={() => router.push('/login')}
       >
         <Shield color="white" size={24} />
         <Text style={styles.buttonText}>Adult Space (Admin)</Text>

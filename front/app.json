@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.vincedom.edu2",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -26,6 +27,16 @@
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
+      [
+        "react-native-app-auth",
+        {
+          "redirectUrls": [
+            "front://oauth/callback",
+            "front://oauth/logout"
+          ]
+        }
+      ],
       [
         "expo-splash-screen",
         {
